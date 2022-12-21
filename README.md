@@ -9,7 +9,7 @@ Essentially this repo only contains the DDL script, some snipetts for documentat
 
 ### Changelog
 
-- **0.0.1** - Initial commit, just the frame of things
+- **1.0.0** - Initial/original concept, only for retreiving geoname_id's of the respective location tables.
 
 ### Currently working on
 
@@ -22,7 +22,7 @@ Essentially this repo only contains the DDL script, some snipetts for documentat
 
 ### TODO
 
-- upload city DDL
+- add stored procedures to return whole record from the _blocks tables
 
 ## Usage
 
