@@ -83,6 +83,6 @@ This project won't be maintained, it is just an example of how to solve seemingl
 
 ## License
 
-As noted in the LICENSE.md file, this work is licensed under Creative Commons BY-NC 4.0
+As noted in the LICENSE.md file, this work is licensed under Creative Commons BY-NC 4.0 If you found it useful, please leave a star. Thanks.
 
 For commercial usage, please conatact the author.
