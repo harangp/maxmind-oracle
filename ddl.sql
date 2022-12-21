@@ -5,8 +5,8 @@ create table country_blocks (
 	geoname_id number not null,
 	registered_country_geoname_id number,
 	represented_country_geoname_id number,
-	is_anonymous_proxy number not null,
-	is_satellite_provider not null,
+	is_anonymous_proxy number(1) not null,
+	is_satellite_provider number(1) not null,
 	significant_bits number as (to_number(regexp_substr(network, '\d+', 1, 5))),
 	bitmask number as (bitand(4294967295 * power(2, 32 - to_number(regexp_substr(network, '\d+', 1, 5))), 4294967295)),
 	masked_network number as (bitand(
@@ -33,11 +33,12 @@ create table country_locations (
 );
 
 -- for fast id-based lookup
-create index idx_country_locations_geoname on city_locations (geoname_id) compute statistics;
+create index idx_country_locations_geoname on country_locations (geoname_id) compute statistics;
 
 -- function to retreive the geoname_id for a given ip address
 create or replace function getCountryGeoNameId (ip in varchar2)
-return numberis ret number;
+return number
+is ret number;
 begin
 	select geoname_id
 	into ret
@@ -72,8 +73,8 @@ create table city_blocks (
 	geoname_id number not null,
 	registered_country_geoname_id number,
 	represented_country_geoname_id number,
-	is_anonymous_proxy number not null,
-	is_satellite_provider not null,
+	is_anonymous_proxy number(1) not null,
+	is_satellite_provider number(1) not null,
 	postal_code varchar2(18),
 	latitude number,
 	longitude number,
@@ -115,7 +116,8 @@ create index idx_city_locations_geoname on city_locations (geoname_id) compute s
 
 -- function to retreive the geoname_id for a given ip address
 create or replace function getCityGeoNameId (ip in varchar2)
-return numberis ret number;
+return number
+is ret number;
 begin
 	select geoname_id
 	into ret
