@@ -9,6 +9,7 @@ Essentially this repo only contains the DDL script, some snipetts for documentat
 
 ### Changelog
 
+- **1.1.0** - New functions
 - **1.0.1** - Bugfixes / typos
 - **1.0.0** - Initial/original concept, only for retreiving geoname_id's of the respective location tables.
 
@@ -48,10 +49,21 @@ Upon invoking either function, they will return **a key, that can be looked up f
 - `getCountryGeoNameId()` returns the field to be looked up from `country_locations.geoname_id`
 - `getCityGeoNameId()` returns the field to be looked up from `city_locations.geoname_id`
 
+Use these functions, if you are interested in looking up the country/continent/city/etc detailed information.
+
 If you want to **get access to the block record** in a stored procedure, you might want to use other functions:
 
 - `getCountryBlock()` returns the one row of `country_blocks` that most matches the input ip address
 - `getCityBlock()` returns the one row of `city_blocks` that most matches the input ip address
+
+These will return the row itself, which can be further accessed in the inside of a stored procedure. Get the ids, access the data, make further lookups if you need extra information from the location tables. 
+
+If you want to **get an id for retrieving the block record** (for example because you want to use it in a simple select) then there are convenience functions to do so:
+
+- `getCountryBlockNetwork()` returns he `network` column of the found country block
+- `getCityBlockNetwork()` returns the `network` column of the found city block
+
+You can use the result to look up the whole record by id. Altough the structure doesn't define the `network` to be a primary key, but it is pretty much is.
 
 #### Example for getCityGeoNameId():
 
@@ -87,6 +99,19 @@ which putputs this:
 Statement processed.
 Lat: -34.9281 Long:138.5999
 ```
+
+#### Example for getCityBlockNetwork()
+
+``` SQL
+select * 
+from city_blocks 
+where network = getCityBlockNetwork('1.0.71.10');
+```
+returns this:
+
+| NETWORK | GEONAME_ID | REGISTERED_COUNTRY_GEONAME_ID | REPRESENTED_COUNTRY_GEONAME_ID | IS_ANONYMOUS_PROXY | IS_SATELLITE_PROVIDER | POSTAL_CODE | LATITUDE | LONGITUDE | ACCURACY_RADIUS | SIGNIFICANT_BITS | BITMASK | MASKED_NETWORK |
+| - | - | - | - | - | - | - | - | - | - | - | - | - |
+| 1.0.0.0/24 | 2078025 | 2077456 |   | 0 | 0 | 5000 | -34.9281 | 138.5999 | 1000 | 24 | 4294967040 | 16777216|
 
 ## Concepts of the solution
 
