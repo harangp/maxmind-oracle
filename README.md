@@ -13,18 +13,10 @@ Essentially this repo only contains the DDL script, some snipetts for documentat
 - **1.0.1** - Bugfixes / typos
 - **1.0.0** - Initial/original concept, only for retreiving geoname_id's of the respective location tables.
 
-### Currently working on
-
-- Function to return resultset
-
 ### Known issues
 
 - This concept only handles IPv4 addresses, though it could be extended to IPv6 as well
 - Reverse lookup is not implemented (eg.: find the ip ranges for a certain geolocation)
-
-### TODO
-
-- Document update / Article on Medium
 
 ## Usage
 
@@ -44,7 +36,7 @@ If you just want to fiddle, there's a small sample you can insert. Just **run th
 
 ### Functions
 
-Upon invoking either function, they will return **a key, that can be looked up from their respective _locations table**:
+Upon invoking either of the *GeoNameId functions, they will return **a key, that can be looked up from their respective _locations table**:
 
 - `getCountryGeoNameId()` returns the field to be looked up from `country_locations.geoname_id`
 - `getCityGeoNameId()` returns the field to be looked up from `city_locations.geoname_id`
@@ -94,7 +86,7 @@ begin
 end;
 /
 ```
-which putputs this:
+which outputs this:
 ```
 Statement processed.
 Lat: -34.9281 Long:138.5999
