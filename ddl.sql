@@ -73,7 +73,7 @@ create or replace function getCountryGeoNameId (ip in varchar2)
 	end;
 /
 
-create or replace function getCountryBlocks (ip in varchar2)
+create or replace function getCountryBlock (ip in varchar2)
 	return country_blocks%ROWTYPE
 	is ret country_blocks%ROWTYPE;
 	begin
