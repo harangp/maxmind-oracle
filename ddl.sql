@@ -80,7 +80,7 @@ create table city_blocks (
 	postal_code varchar2(18),
 	latitude number,
 	longitude number,
-	accuracy_radious number,
+	accuracy_radius number,
 	significant_bits number as (to_number(regexp_substr(network, '\d+', 1, 5))),
 	bitmask number as (bitand(4294967295 * power(2, 32 - to_number(regexp_substr(network, '\d+', 1, 5))), 4294967295)),
 	masked_network number as (bitand(
