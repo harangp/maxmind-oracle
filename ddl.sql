@@ -26,6 +26,7 @@ create table country_blocks (
 );
 
 create index idx_country_blocks_masked_network on country_blocks (masked_network, significant_bits) compress 1 compute statistics;
+create index idx_country_blocks_network on country_blocks (network) compress 1 compute statistics;
 
 create table country_locations (
 	geoname_id number not null,
@@ -104,6 +105,14 @@ create or replace function getCountryBlock (ip in varchar2)
 	end;
 /
 
+create or replace function getCountryBlockNetwork (ip in varchar2)
+	return varchar2
+	is ret country_blocks%ROWTYPE;
+	begin
+        ret := getCountryBlock(ip);
+		return ret.network;
+	end;
+/
 
 ---
 --- Accessing city-level information
@@ -218,5 +227,14 @@ create or replace function getCityBlock (ip in varchar2)
 		) where rownum <= 1;
 		
 		return ret;
+	end;
+/
+
+create or replace function getCityBlockNetwork (ip in varchar2)
+	return varchar2
+	is ret city_blocks%ROWTYPE;
+	begin
+        ret := getCityBlock(ip);
+		return ret.network;
 	end;
 /
