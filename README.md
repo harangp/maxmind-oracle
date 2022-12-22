@@ -48,6 +48,19 @@ Upon invoking either stored procedures, they will return **a key, that can be lo
 - `getCountryGeoNameId()` returns the field to be looked up from `country_locations.geoname_id`
 - `getCityGeoNameId()` returns the field to be looked up from `city_locations.geoname_id`
 
+Example:
+
+``` SQL
+select * 
+from city_locations
+where geoname_id = getCityGeoNameId('1.0.71.10');
+```
+returns this:
+
+| GEONAME_ID | LOCALE_CODE | CONTINENT_CODE | CONTINENT_NAME | COUNTRY_ISO_CODE | COUNTRY_NAME | SUBDIVISION_1_ISO_CODE | SUBDIVISION_1_NAME | SUBDIVISION_2_ISO_CODE | SUBDIVISION_2_NAME | CITY_NAME | METRO_CODE | TIME_ZONE | IS_IN_EUROPEAN_UNION |
+| - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+| 2078025 | en | OC | Oceania | AU | Australia | SA | South Australia | - | - | Adelaide | - | Australia/Adelaide | 0 |
+
 Please note, that MaxMind organizes it's data in a way that the city-level database also contains the country-level database, so for your lookups, you don't have to use both information.
 
 Also note, that if you are cross-referencing the `geoname_id` from wrong table, you'll get bad results. This seem to be trivial, but I've seen many db programmers fall for this mistake.
