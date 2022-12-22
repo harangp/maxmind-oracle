@@ -147,3 +147,37 @@ create or replace function getCityGeoNameId (ip in varchar2)
 	end;
 /
 
+/**
+ * retrieving the city_block row record for the best matching IP address
+ * use it in stored procedures. For details, check README.md
+ */
+create or replace function getCityBlock (ip in varchar2)
+	return city_blocks%ROWTYPE
+	is ret city_blocks%ROWTYPE;
+	begin
+		select *
+		into ret
+		from (
+			select
+				city_blocks.*
+			from (
+				select
+					ip,
+					to_number(regexp_substr(ip, '\d+', 1, 1)) * 16777216 +
+					to_number(regexp_substr(ip, '\d+', 1, 2)) * 65536 +
+					to_number(regexp_substr(ip, '\d+', 1, 3)) * 256 +
+					to_number(regexp_substr(ip, '\d+', 1, 4)) numip
+				from dual
+			) src, city_blocks
+			where masked_network in (
+				select 
+					bitand(numip, bitand(4294967295 * power(2, rownum-1), 4294967295))
+				from dual
+				connect by rownum <= 32
+			)
+			order by significant_bits desc
+		) where rownum <= 1;
+		
+		return ret;
+	end;
+/
