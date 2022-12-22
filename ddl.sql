@@ -3,6 +3,9 @@
  * Author: Harang Péter
  */
 
+---
+--- Accessing country-level information
+---
 
 create table country_blocks (
 	network varchar2(19) not null,
@@ -69,6 +72,42 @@ create or replace function getCountryGeoNameId (ip in varchar2)
 		return ret;
 	end;
 /
+
+create or replace function getCountryBlocks (ip in varchar2)
+	return country_blocks%ROWTYPE
+	is ret country_blocks%ROWTYPE;
+	begin
+		select *
+		into ret
+		from (
+			select
+				country_blocks.*
+			from (
+				select
+					ip,
+					to_number(regexp_substr(ip, '\d+', 1, 1)) * 16777216 +
+					to_number(regexp_substr(ip, '\d+', 1, 2)) * 65536 +
+					to_number(regexp_substr(ip, '\d+', 1, 3)) * 256 +
+					to_number(regexp_substr(ip, '\d+', 1, 4)) numip
+				from dual
+			) src, country_blocks
+			where masked_network in (
+				select 
+					bitand(numip, bitand(4294967295 * power(2, rownum-1), 4294967295))
+				from dual
+				connect by rownum <= 32
+			)
+			order by significant_bits desc
+		) where rownum <= 1;
+		
+		return ret;
+	end;
+/
+
+
+---
+--- Accessing city-level information
+---
 
 create table city_blocks (
 	network varchar2(19) not null,
