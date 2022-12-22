@@ -43,12 +43,17 @@ If you just want to fiddle, there's a small sample you can insert. Just **run th
 
 ### Functions
 
-Upon invoking either stored procedures, they will return **a key, that can be looked up from their respective _locations table**:
+Upon invoking either function, they will return **a key, that can be looked up from their respective _locations table**:
 
 - `getCountryGeoNameId()` returns the field to be looked up from `country_locations.geoname_id`
 - `getCityGeoNameId()` returns the field to be looked up from `city_locations.geoname_id`
 
-Example:
+If you want to **get access to the block record** in a stored procedure, you might want to use other functions:
+
+- `getCountryBlock()` returns the one row of `country_blocks` that most matches the input ip address
+- `getCityBlock()` returns the one row of `city_blocks` that most matches the input ip address
+
+#### Example for getCityGeoNameId():
 
 ``` SQL
 select * 
@@ -64,6 +69,24 @@ returns this:
 Please note, that MaxMind organizes it's data in a way that the city-level database also contains the country-level database, so for your lookups, you don't have to use both information.
 
 Also note, that if you are cross-referencing the `geoname_id` from wrong table, you'll get bad results. This seem to be trivial, but I've seen many db programmers fall for this mistake.
+
+#### Example for getCityBlock():
+
+``` SQL
+declare
+  myrow city_blocks%ROWTYPE;
+begin
+  myrow := getCityBlock('1.0.71.10');
+
+  dbms_output.put_line('Lat: ' || myrow.latitude || ' Long: ' ||  myrow.longitude);
+end;
+/
+```
+which putputs this:
+```
+Statement processed.
+Lat: -34.9281 Long:138.5999
+```
 
 ## Concepts of the solution
 
