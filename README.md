@@ -9,11 +9,12 @@ Essentially this repo only contains the DDL script, some snipetts for documentat
 
 ### Changelog
 
+- **1.0.1** - Bugfixes / typos
 - **1.0.0** - Initial/original concept, only for retreiving geoname_id's of the respective location tables.
 
 ### Currently working on
 
-- Documentation
+- Function to return resultset
 
 ### Known issues
 
@@ -22,9 +23,11 @@ Essentially this repo only contains the DDL script, some snipetts for documentat
 
 ### TODO
 
-- add stored procedures to return whole record from the _blocks tables
+- Document update / Article on Medium
 
 ## Usage
+
+### Preparation
 
 Just **run the `ddl.sql`** in your favourite Oracle database. It will create the:
 
@@ -35,6 +38,10 @@ The next step is **importing the data** from MaxMind's CSV files. Every table is
 
 - http://www.dba-oracle.com/tips_sqlldr_loader.htm
 - https://docs.oracle.com/en/database/oracle/property-graph/22.4/spgdg/importing-data-csv-files.html
+
+If you just want to fiddle, there's a small sample you can insert. Just **run the `sample.sql`** after you created the database.
+
+### Functions
 
 Upon invoking either stored procedures, they will return **a key, that can be looked up from their respective _locations table**:
 
@@ -55,11 +62,17 @@ Also note, that if you are cross-referencing the `geoname_id` from wrong table, 
 
 ### The challenge
 
-The database contains the geolocation of an **IP range** - and not individual IP addresses. You can find more on the range / subnet topic here: https://en.wikipedia.org/wiki/Subnetwork The main thing is, if you examine the country_blocks.network field, you'll find data something like this: `192.168.5.64/26`
+The database contains the geolocation of an **IP range** - and not individual IP addresses. You can find more on the range / subnet topic here: 
+- https://en.wikipedia.org/wiki/Subnetwork
+- https://www.interfacett.com/blogs/how-to-interpret-subnet-masks-in-network-environments/
+
+The main thing is, if you examine the `country_blocks.network` field, you'll find data something like this: `192.168.5.64/26`, which is a text representation, so it must be transformed to be worked with.
 
 There can be **more subnets that match your query** against a the database - and this is totally normal. You have your ISP's internal subnet, your ISP's global subnet, your country's subnet, regional, etc. The challenge is to **find the one that has the largest match** for the IP you are trying to geolocate. It's obvious, that matching text input against text in the database column (and essentially doing calculations in query time) won't result in an efficient solution, so we'll have to design a different approach.
 
 ### Solution design
+
+#### Table structure
 
 There's a lesser known (albeit an old) existing feature called **function-based virtual columns**. The main concept is that you can add a column, that is derived from the original (physical) columns through some expression(s), so the value can be calculated from the original data on-the-fly, or even stored upon creation/modification. If the calculation/expression is deterministic (meaning it will yield the same output for the same input), it can be used for other purposes as well - in our case to be **included in an index**.
 
@@ -69,9 +82,38 @@ The aboved mentioned approaches combined, we'd generate virtual columns that ext
 - the significant bits
 - the bitmask based on the significant bits
 - the masked network number
-based only on the string given in the `network` field.
 
-Upon querying the input address, there's the problem of comparing the IP range to a number that is specifically masked for the defined range (the `/xx` part of the network field, or the `significant_bits` field we've just calculated) - this would mean, that for each record, we would have to generate the masked address of the input IP address, and compare it against the masked network number (found in the virtual column). Instead, we **generate all the possible masked variants of the input address** - there are 32 of them - and select those from the lookup table. Ordering descending the results based on the `significant_bits` virtual column, and selecting the first elemet yields our best match.
+All of them are based only on the string given in the `network` field.
+
+#### IP to number conversion
+
+The IP address comes in the usual format of `192.168.5.64`, and also, the IP range is like this: `192.168.5.64/26`. So to retrieve the numerical representation into the integer, we have to split/convert/shift/add the numbers. Thanks for regexp, this can be easily done like this*:
+
+``` SQL
+select 
+  to_number(regexp_substr(ip, '\d+', 1, 1)) * 16777216 +
+  to_number(regexp_substr(ip, '\d+', 1, 2)) * 65536 +
+  to_number(regexp_substr(ip, '\d+', 1, 3)) * 256 +
+  to_number(regexp_substr(ip, '\d+', 1, 4)) as numip
+from dual
+```
+*considering the address comes in the variable `ip`
+
+#### Query
+
+Upon querying the input address, there's the problem of comparing the IP range to a number that is specifically masked for the defined range (the `/xx` part of the network field, or the `significant_bits` field we've just calculated) - this would mean, that for each record, we would have to generate the masked address of the input IP address, and compare it against the masked network number (found in the virtual column). Instead, we **generate all the possible masked variants of the input address** - there are 32 of them - and select those from the lookup table.
+
+``` SQL
+select 
+  bitand(numip, bitand(4294967295 * power(2, rownum-1), 4294967295))
+from dual
+connect by rownum <= 32
+```
+Notice, that `numip` is the numerical representation of the IP address we try to look up
+
+From this on, it is quite simple: just select all the records that match the masked_network field. Order descending the results based on the `significant_bits` virtual column, and selecting the first elemet yields our best match, which is the result we'd like to get.
+
+#### Index design
 
 This means, we'll have to generate only one index on the `masked_network` field, and we are good to go. Using this technique, instead of lengthy scans, we have 32 index-based direct id lookups, which the database can further parallelize during execution.
 
@@ -83,6 +125,6 @@ This project won't be maintained, it is just an example of how to solve seemingl
 
 ## License
 
-As noted in the LICENSE.md file, this work is licensed under Creative Commons BY-NC 4.0 If you found it useful, please leave a star. Thanks.
+As noted in the LICENSE.md file, this work is licensed under Creative Commons BY-NC 4.0 **If you found it useful, please leave a star.** Thanks.
 
 For commercial usage, please conatact the author.
