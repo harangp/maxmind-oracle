@@ -67,7 +67,7 @@ create or replace function getCountryGeoNameId (ip in varchar2)
 				from dual
 				connect by rownum <= 32
 			)
-			order by significant_bits desc
+			order by masked_network desc, significant_bits desc
 		) where rownum <= 1;
 		
 		return ret;
@@ -98,7 +98,7 @@ create or replace function getCountryBlock (ip in varchar2)
 				from dual
 				connect by rownum <= 32
 			)
-			order by significant_bits desc
+			order by masked_network desc, significant_bits desc
 		) where rownum <= 1;
 		
 		return ret;
@@ -188,7 +188,7 @@ create or replace function getCityGeoNameId (ip in varchar2)
 				from dual
 				connect by rownum <= 32
 			)
-			order by significant_bits desc
+			order by masked_network desc, significant_bits desc
 		) where rownum <= 1;
 		
 		return ret;
@@ -223,7 +223,7 @@ create or replace function getCityBlock (ip in varchar2)
 				from dual
 				connect by rownum <= 32
 			)
-			order by significant_bits desc
+			order by masked_network desc, significant_bits desc
 		) where rownum <= 1;
 		
 		return ret;
