@@ -9,6 +9,7 @@ Essentially this repo only contains the DDL script, some snipetts for documentat
 
 ### Changelog
 
+- **1.1.1** - Bugfix in sorting for retrieving the correct id
 - **1.1.0** - New functions
 - **1.0.1** - Bugfixes / typos
 - **1.0.0** - Initial/original concept, only for retreiving geoname_id's of the respective location tables.
@@ -68,7 +69,7 @@ returns this:
 
 | GEONAME_ID | LOCALE_CODE | CONTINENT_CODE | CONTINENT_NAME | COUNTRY_ISO_CODE | COUNTRY_NAME | SUBDIVISION_1_ISO_CODE | SUBDIVISION_1_NAME | SUBDIVISION_2_ISO_CODE | SUBDIVISION_2_NAME | CITY_NAME | METRO_CODE | TIME_ZONE | IS_IN_EUROPEAN_UNION |
 | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
-| 2078025 | en | OC | Oceania | AU | Australia | SA | South Australia | - | - | Adelaide | - | Australia/Adelaide | 0 |
+| 1863018 | en | AS | Asia | JP | Japan | 34 | Hiroshima | - | - | Hatsukaichi | - | Asia/Tokyo | 0 |
 
 Please note, that MaxMind organizes it's data in a way that the city-level database also contains the country-level database, so for your lookups, you don't have to use both information.
 
@@ -89,7 +90,7 @@ end;
 which outputs this:
 ```
 Statement processed.
-Lat: -34.9281 Long:138.5999
+Lat: 34.383 Long: 132.5459
 ```
 
 #### Example for getCityBlockNetwork()
@@ -103,7 +104,7 @@ returns this:
 
 | NETWORK | GEONAME_ID | REGISTERED_COUNTRY_GEONAME_ID | REPRESENTED_COUNTRY_GEONAME_ID | IS_ANONYMOUS_PROXY | IS_SATELLITE_PROVIDER | POSTAL_CODE | LATITUDE | LONGITUDE | ACCURACY_RADIUS | SIGNIFICANT_BITS | BITMASK | MASKED_NETWORK |
 | - | - | - | - | - | - | - | - | - | - | - | - | - |
-| 1.0.0.0/24 | 2078025 | 2077456 |   | 0 | 0 | 5000 | -34.9281 | 138.5999 | 1000 | 24 | 4294967040 | 16777216|
+| 1.0.71.0/24 | 1863018 | 1861060 | - | 0 | 0 | 687 | 34.383 | 132.5459 | 10 | 24 | 4294967040 | 16795392|
 
 ## Concepts of the solution
 
@@ -164,7 +165,7 @@ connect by rownum <= 32
 ```
 Notice, that `numip` is the numerical representation of the IP address we try to look up
 
-From this on, it is quite simple: just select all the records that match the masked_network field. Order descending the results based on the `significant_bits` virtual column, and selecting the first elemet yields our best match, which is the result we'd like to get.
+From this on, it is quite simple: just select all the records that match the masked_network field. Order descending the results based on the `masked_network` and `significant_bits` virtual columns, and selecting the first elemet yields our best match, which is the result we'd like to get.
 
 #### Index design
 
