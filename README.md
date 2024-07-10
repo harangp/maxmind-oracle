@@ -153,19 +153,122 @@ from dual
 ```
 *considering the address comes in the variable `ip`
 
-#### Query
+#### Query designs
+
+There are multiple approaches we can take on retrieving the most suitable range.
+
+##### Plain vanilla solution
+
+The ip address is in the range, if we apply the bitmask to the ip address, and compare it to the masked_network value.
+
+``` SQL
+select
+    src.*, city_blocks.*, masked_network + power(2, 32-significant_bits) - 1
+from (
+    select
+      ip,
+      to_number(regexp_substr(ip, '\d+', 1, 1)) * 16777216 +
+      to_number(regexp_substr(ip, '\d+', 1, 2)) * 65536 +
+      to_number(regexp_substr(ip, '\d+', 1, 3)) * 256 +
+      to_number(regexp_substr(ip, '\d+', 1, 4)) as numip
+    from dual
+) src, city_blocks
+where bitand(src.numip, bitmask) = masked_network
+order by significant_bits desc;
+```
+
+If multiple ranges are found, the one with the most significant_bits should be selected.
+
+The problem with this design is, that the database has to apply a bitwise AND operation to the ip address according to all of the bitmasks of all records. AND-ing lot's of numbers is fast, but we should strive for a better solution.
+
+##### Using BETWEEN
+
+As we have the ip ranges in a numeric form, we can easily do a select where the `numip` is between the lower and higher end of the range. With our table, it's quite simple:
+
+``` SQL
+select
+    src.*, city_blocks.*, masked_network + power(2, 32-significant_bits) - 1
+from (
+    select
+      ip,
+      to_number(regexp_substr(ip, '\d+', 1, 1)) * 16777216 +
+      to_number(regexp_substr(ip, '\d+', 1, 2)) * 65536 +
+      to_number(regexp_substr(ip, '\d+', 1, 3)) * 256 +
+      to_number(regexp_substr(ip, '\d+', 1, 4)) as numip
+    from dual
+) src, city_blocks
+where src.numip between masked_network and masked_network + (power(2, 32-significant_bits) - 1)
+order by significant_bits desc;
+```
+Lower bound of the range is essentially the `masked_network` value, and higher bound is calculated by adding the maximum value (which is `32 - significant_bits`) to the host bits. If multiple ranges are found, the one with the most significant_bits should be selected.
+
+This method seems computationally heavier, than the previous one. However, with this approach opens up two possibilities:
+
+- either put the calculated higher bound into a virtual column and index it together with `masked_network`
+- or just simply create an index, which contains this calculated value. Oracle will knwow NOT to calculate the value, as it is in the index, and it can reuse it.
+
+##### Generating masked IPs and directly select them - the "sounds good, doesn't work" approach
 
 Upon querying the input address, there's the problem of comparing the IP range to a number that is specifically masked for the defined range (the `/xx` part of the network field, or the `significant_bits` field we've just calculated) - this would mean, that for each record, we would have to generate the masked address of the input IP address, and compare it against the masked network number (found in the virtual column). Instead, we **generate all the possible masked variants of the input address** - there are 32 of them - and select those from the lookup table.
 
 ``` SQL
-select 
+select
   bitand(numip, bitand(4294967295 * power(2, rownum-1), 4294967295))
 from dual
 connect by rownum <= 32
 ```
-Notice, that `numip` is the numerical representation of the IP address we try to look up
+Notice, that `numip` is the numerical representation of the IP address we try to look up.
 
-From this on, it is quite simple: just select all the records that match the masked_network field. Order descending the results based on the `masked_network` and `significant_bits` virtual columns, and selecting the first elemet yields our best match, which is the result we'd like to get.
+The first intuition is that this is an elegant solution, as we can pass it to a `WHERE masked_network IN ()` clause matching the `masked_network` field. Order descending the results based on the `masked_network` and `significant_bits` virtual columns, and selecting the first elemet yields our best match, which is the result we'd like to get.
+
+**However, this doesn't work.** The problem is that with this, we might have cases where a range is missing, and a lower order generated masked value might match a higher tier range. Here's an example:
+
+```
+Range: 128.0.0.0/32 -> this means, that we only look for this specific ip address
+IP: 128.0.0.1
+Calculated masked ip-s:
+- 128.0.0.1, significant bits:32
+- 128.0.0.0, significant bits: 31..1
+
+128.0.0.1 with significant bits 31 to 1 will match with 128.0.0.0 and result a faulty answer.
+```
+
+##### Using inner table JOIN
+
+Let's address the problem with the previous solution. We have to create a table where the masked versions of the ip address are generated alongside with the information of how long of a mask was applied. Joining this inner table with the large one is nearly trivial:
+
+``` SQL
+select
+    src.*, city_blocks.*
+from (
+    select
+        '1.0.71.10',
+        to_number(regexp_substr('1.0.71.10', '\d+', 1, 1)) * 16777216 +
+        to_number(regexp_substr('1.0.71.10', '\d+', 1, 2)) * 65536 +
+        to_number(regexp_substr('1.0.71.10', '\d+', 1, 3)) * 256 +
+        to_number(regexp_substr('1.0.71.10', '\d+', 1, 4)) numip,
+        bitand(
+            to_number(regexp_substr('1.0.71.10', '\d+', 1, 1)) * 16777216 +
+            to_number(regexp_substr('1.0.71.10', '\d+', 1, 2)) * 65536 +
+            to_number(regexp_substr('1.0.71.10', '\d+', 1, 3)) * 256 +
+            to_number(regexp_substr('1.0.71.10', '\d+', 1, 4)),
+        	  bitand(4294967295 * power(2, rownum-1), 4294967295)
+    	  ) as masked_numip,
+        32 - rownum as rn
+    from dual
+    connect by rownum <= 32
+) src, city_blocks
+where masked_network = masked_numip and significant_bits = rn
+order by rn desc, significant_bits desc;
+```
+
+Please note the `significant_bits = rn` clause, which takes care of not matching ranges with different significant bits. Also, rn should be used for sorting first, as we are interested in the largest matching.
+
+This solution seems a bit overengineered, and it is. However there are some positives:
+
+- as significant bits can be stored as NUMBER(2) values, space and memory can be saved
+- index building will be faster, as no complicated math is involved with the generation
+- index will be smaler as well, because of the reduced range
 
 #### Index design
 
