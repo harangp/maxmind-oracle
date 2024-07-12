@@ -9,11 +9,11 @@
 
 create table country_blocks (
 	network varchar2(19) not null,
-	geoname_id number not null,
+	geoname_id number,
 	registered_country_geoname_id number,
 	represented_country_geoname_id number,
-	is_anonymous_proxy number not null,
-	is_satellite_provider number(1) not null,
+	is_anonymous_proxy number(1),
+	is_satellite_provider number(1),
 	postal_code varchar2(24),
 	latitude number,
 	longitude number,
@@ -28,7 +28,6 @@ create table country_blocks (
 		bitand(4294967295 * power(2, 32 - to_number(regexp_substr(network, '\d+', 1, 5))), 4294967295)
 	))
 );
-
 
 create index idx_country_blocks_masked_network on country_blocks (masked_network, significant_bits) compress 1 compute statistics;
 create index idx_country_blocks_network on country_blocks (network) compress 1 compute statistics;
