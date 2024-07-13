@@ -18,4 +18,14 @@ SELECT
     accuracy_radius
 FROM imp_country_blocks;
 
+-- approx. 120.000 records
+-- mere seconds with geoname_id indexed column
+DELETE FROM COUNTRY_LOCATIONS;
+
+insert into country_locations (
+    geoname_id, locale_code, continent_code, continent_name, country_iso_code, country_name, is_in_european_union
+) select 
+    geoname_id, locale_code, continent_code, continent_name, country_iso_code, country_name, is_in_european_union
+from imp_country_locations;
+
 commit;
