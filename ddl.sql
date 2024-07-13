@@ -5,6 +5,7 @@
 
 ---
 --- Accessing country-level information
+--- Table holds all of the fields that are required for experiments. Remove the ones you don't need in production.
 ---
 
 create table country_blocks (
@@ -26,11 +27,19 @@ create table country_blocks (
 		to_number(regexp_substr(network, '\d+', 1, 3)) * 256 +
 		to_number(regexp_substr(network, '\d+', 1, 4)),
 		bitand(4294967295 * power(2, 32 - to_number(regexp_substr(network, '\d+', 1, 5))), 4294967295)
-	))
+	)),
+    	upper_bound number as (bitor(
+		to_number(regexp_substr(network, '\d+', 1, 1)) * 16777216 +
+		to_number(regexp_substr(network, '\d+', 1, 2)) * 65536 +
+		to_number(regexp_substr(network, '\d+', 1, 3)) * 256 +
+		to_number(regexp_substr(network, '\d+', 1, 4)),
+		(power(2, 32 - to_number(regexp_substr(network, '\d+', 1, 5))) - 1)
+    	))
 );
 
 create index idx_country_blocks_masked_network on country_blocks (masked_network, significant_bits) compress 1 compute statistics;
-create index idx_country_blocks_network on country_blocks (network) compress 1 compute statistics;
+-- if you don't use upper_bound colum, this index is not required
+create index idx_country_blocks_network_bounds on country_blocks (masked_network, upper_bound) compress 1 compute statistics;
 
 create table country_locations (
 	geoname_id number not null,
@@ -58,20 +67,24 @@ create or replace function getCountryGeoNameId (ip in varchar2)
 				src.*, country_blocks.*
 			from (
 				select
-					ip,
-					to_number(regexp_substr(ip, '\d+', 1, 1)) * 16777216 +
-					to_number(regexp_substr(ip, '\d+', 1, 2)) * 65536 +
-					to_number(regexp_substr(ip, '\d+', 1, 3)) * 256 +
-					to_number(regexp_substr(ip, '\d+', 1, 4)) numip
-				from dual
-			) src, country_blocks
-			where masked_network in (
-				select 
-					bitand(numip, bitand(4294967295 * power(2, rownum-1), 4294967295))
+					:ip,
+					to_number(regexp_substr(:ip, '\d+', 1, 1)) * 16777216 +
+					to_number(regexp_substr(:ip, '\d+', 1, 2)) * 65536 +
+					to_number(regexp_substr(:ip, '\d+', 1, 3)) * 256 +
+					to_number(regexp_substr(:ip, '\d+', 1, 4)) numip,
+					bitand(
+						to_number(regexp_substr(:ip, '\d+', 1, 1)) * 16777216 +
+						to_number(regexp_substr(:ip, '\d+', 1, 2)) * 65536 +
+						to_number(regexp_substr(:ip, '\d+', 1, 3)) * 256 +
+						to_number(regexp_substr(:ip, '\d+', 1, 4)),
+						power(2, 32) - 1  - (power(2, rownum - 1) - 1)
+					) as masked_numip,
+					33 - rownum as generated_network_bits
 				from dual
 				connect by rownum <= 32
-			)
-			order by masked_network desc, significant_bits desc
+			) src, country_blocks
+			where masked_network = masked_numip and significant_bits <= generated_network_bits
+			order by generated_network_bits desc, significant_bits desc
 		) where rownum <= 1;
 		
 		return ret;
@@ -89,20 +102,24 @@ create or replace function getCountryBlock (ip in varchar2)
 				country_blocks.*
 			from (
 				select
-					ip,
-					to_number(regexp_substr(ip, '\d+', 1, 1)) * 16777216 +
-					to_number(regexp_substr(ip, '\d+', 1, 2)) * 65536 +
-					to_number(regexp_substr(ip, '\d+', 1, 3)) * 256 +
-					to_number(regexp_substr(ip, '\d+', 1, 4)) numip
-				from dual
-			) src, country_blocks
-			where masked_network in (
-				select 
-					bitand(numip, bitand(4294967295 * power(2, rownum-1), 4294967295))
+					:ip,
+					to_number(regexp_substr(:ip, '\d+', 1, 1)) * 16777216 +
+					to_number(regexp_substr(:ip, '\d+', 1, 2)) * 65536 +
+					to_number(regexp_substr(:ip, '\d+', 1, 3)) * 256 +
+					to_number(regexp_substr(:ip, '\d+', 1, 4)) numip,
+					bitand(
+						to_number(regexp_substr(:ip, '\d+', 1, 1)) * 16777216 +
+						to_number(regexp_substr(:ip, '\d+', 1, 2)) * 65536 +
+						to_number(regexp_substr(:ip, '\d+', 1, 3)) * 256 +
+						to_number(regexp_substr(:ip, '\d+', 1, 4)),
+						power(2, 32) - 1  - (power(2, rownum - 1) - 1)
+					) as masked_numip,
+					33 - rownum as generated_network_bits
 				from dual
 				connect by rownum <= 32
-			)
-			order by masked_network desc, significant_bits desc
+			) src, country_blocks
+			where masked_network = masked_numip and significant_bits <= generated_network_bits
+			order by generated_network_bits desc, significant_bits desc
 		) where rownum <= 1;
 		
 		return ret;
