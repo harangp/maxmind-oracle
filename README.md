@@ -197,23 +197,25 @@ from (
       to_number(regexp_substr(ip, '\d+', 1, 4)) as numip
     from dual
 ) src, city_blocks
-where src.numip between masked_network and masked_network + (power(2, 32-significant_bits) - 1)
+where src.numip between masked_network and masked_network + power(2, 32-significant_bits)
 order by significant_bits desc;
 ```
 Lower bound of the range is essentially the `masked_network` value, and higher bound is calculated by adding the maximum value (which is `32 - significant_bits`) to the host bits. If multiple ranges are found, the one with the most significant_bits should be selected.
 
-This method seems computationally heavier, than the previous one. However, with this approach opens up two possibilities:
+This method seems computationally heavier, than the previous one. However, with this approach opens up a possibility: put the calculated higher bound into a virtual column and index it together with `masked_network`.
 
-- either put the calculated higher bound into a virtual column and index it together with `masked_network`
-- or just simply create an index, which contains this calculated value. Oracle will knwow NOT to calculate the value, as it is in the index, and it can reuse it.
+Note, that simply creating an index, which contains this calculated value is not optimal, as calculated indexes can't include virtual columnt's values - which is a bummer.
 
 ##### Generating masked IPs and directly select them - the "sounds good, doesn't work" approach
 
 Upon querying the input address, there's the problem of comparing the IP range to a number that is specifically masked for the defined range (the `/xx` part of the network field, or the `significant_bits` field we've just calculated) - this would mean, that for each record, we would have to generate the masked address of the input IP address, and compare it against the masked network number (found in the virtual column). Instead, we **generate all the possible masked variants of the input address** - there are 32 of them - and select those from the lookup table.
 
+The presumed performance gain comes from the fact that it's faster to find exact matches in an index than ranges. Let's try it! But first, check how easily we can generate the masked adresses of a particular ip address:
+
 ``` SQL
 select
-  bitand(numip, bitand(4294967295 * power(2, rownum-1), 4294967295))
+  bitand(numip, power(2, 32) - 1  - (power(2, rownum - 1) - 1)) as masked_numip,
+  33 - rownum as generated_network_bits
 from dual
 connect by rownum <= 32
 ```
@@ -239,30 +241,34 @@ Let's address the problem with the previous solution. We have to create a table 
 
 ``` SQL
 select
-    src.*, city_blocks.*
+    src.*, country_blocks.*
 from (
+    -- this select creates a masked list of ip addresses
     select
-        '1.0.71.10',
-        to_number(regexp_substr('1.0.71.10', '\d+', 1, 1)) * 16777216 +
-        to_number(regexp_substr('1.0.71.10', '\d+', 1, 2)) * 65536 +
-        to_number(regexp_substr('1.0.71.10', '\d+', 1, 3)) * 256 +
-        to_number(regexp_substr('1.0.71.10', '\d+', 1, 4)) numip,
+        :ip,
+        -- this just generates the numerical representation of the ip address
+        to_number(regexp_substr(:ip, '\d+', 1, 1)) * 16777216 +
+        to_number(regexp_substr(:ip, '\d+', 1, 2)) * 65536 +
+        to_number(regexp_substr(:ip, '\d+', 1, 3)) * 256 +
+        to_number(regexp_substr(:ip, '\d+', 1, 4)) numip,
         bitand(
-            to_number(regexp_substr('1.0.71.10', '\d+', 1, 1)) * 16777216 +
-            to_number(regexp_substr('1.0.71.10', '\d+', 1, 2)) * 65536 +
-            to_number(regexp_substr('1.0.71.10', '\d+', 1, 3)) * 256 +
-            to_number(regexp_substr('1.0.71.10', '\d+', 1, 4)),
-        	  bitand(4294967295 * power(2, rownum-1), 4294967295)
+            -- we have to recreate it, because sql doesn't allow to reuse values we've already calculated, and also doesn't have a native function like MySQL does
+            -- you might want to outsource this into a function
+            to_number(regexp_substr(:ip, '\d+', 1, 1)) * 16777216 +
+            to_number(regexp_substr(:ip, '\d+', 1, 2)) * 65536 +
+            to_number(regexp_substr(:ip, '\d+', 1, 3)) * 256 +
+            to_number(regexp_substr(:ip, '\d+', 1, 4)),
+            power(2, 32) - 1  - (power(2, rownum - 1) - 1)
     	  ) as masked_numip,
-        32 - rownum as rn
+        33 - rownum as generated_network_bits
     from dual
     connect by rownum <= 32
-) src, city_blocks
-where masked_network = masked_numip and significant_bits = rn
-order by rn desc, significant_bits desc;
+) src, country_blocks
+where masked_network = masked_numip and significant_bits <= generated_network_bits
+order by generated_network_bits desc, significant_bits desc;
 ```
 
-Please note the `significant_bits = rn` clause, which takes care of not matching ranges with different significant bits. Also, rn should be used for sorting first, as we are interested in the largest matching.
+Please note the `significant_bits <= generated_network_bits` clause, which takes care of matching ranges with different significant bits. Also, `generated_network_bits` should be used for sorting first, as we are interested in the largest matching.
 
 This solution seems a bit overengineered, and it is. However there are some positives:
 
