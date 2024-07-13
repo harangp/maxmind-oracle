@@ -35,6 +35,8 @@ The next step is **importing the data** from MaxMind's CSV files. Every table is
 
 If you just want to fiddle, there's a small sample you can insert. Just **run the `sample.sql`** after you created the database.
 
+There's a slight chance, you don't have access sqlloader, and you want to use Oracle SQL Developer. Yu can use the import function, however, you'll find out, that it can not import data into already existing tables. Instead, import the files into tables starting with `IMP_*`, and then merge / move the data into the final table set. You will find scripts for that in the `merge.sql` file in this repo. This approach can be reused with enterprise solutions, where data has to be allways in place, and we don't have handy tools like we have in development environments, because of automation reasons. If you use an atomic update (as deleting everything from the *_blocks and *_location tables, update them with `insert into select`, and then do a `commit`, just make sure your rollback segment is large enough to handle the use-case.
+
 ### Functions
 
 Upon invoking either of the *GeoNameId functions, they will return **a key, that can be looked up from their respective _locations table**:
@@ -106,7 +108,7 @@ returns this:
 | - | - | - | - | - | - | - | - | - | - | - | - | - |
 | 1.0.71.0/24 | 1863018 | 1861060 | - | 0 | 0 | 687 | 34.383 | 132.5459 | 10 | 24 | 4294967040 | 16795392|
 
-## Concepts of the solution
+## Concepts of the geoIP retrieval solution
 
 ### Goals
 
@@ -252,7 +254,8 @@ from (
         to_number(regexp_substr(:ip, '\d+', 1, 3)) * 256 +
         to_number(regexp_substr(:ip, '\d+', 1, 4)) numip,
         bitand(
-            -- we have to recreate it, because sql doesn't allow to reuse values we've already calculated, and also doesn't have a native function like MySQL does
+            -- we have to recreate it, because sql doesn't allow to reuse values we've already calculated,
+            -- and also doesn't have a native function like MySQL does
             -- you might want to outsource this into a function
             to_number(regexp_substr(:ip, '\d+', 1, 1)) * 16777216 +
             to_number(regexp_substr(:ip, '\d+', 1, 2)) * 65536 +
@@ -275,6 +278,8 @@ This solution seems a bit overengineered, and it is. However there are some posi
 - as significant bits can be stored as NUMBER(2) values, space and memory can be saved
 - index building will be faster, as no complicated math is involved with the generation
 - index will be smaler as well, because of the reduced range
+
+This approach enables a 50 msec retrieval time on a free Oracle Cloud 23i instance, from wifi, so it's not really scientific. On-prem (or closely coupled) solutions should respond faster.
 
 #### Index design
 
