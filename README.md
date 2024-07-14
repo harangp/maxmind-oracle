@@ -9,6 +9,9 @@ Essentially this repo only contains the DDL script, some snipetts for documentat
 
 ### Changelog
 
+Currently working on main: city lookup based on lat/long values
+
+- **1.1.2** - Further optimalizations and bugfixes
 - **1.1.1** - Bugfix in sorting for retrieving the correct id
 - **1.1.0** - New functions
 - **1.0.1** - Bugfixes / typos
@@ -254,8 +257,8 @@ from (
         to_number(regexp_substr(:ip, '\d+', 1, 3)) * 256 +
         to_number(regexp_substr(:ip, '\d+', 1, 4)) numip,
         bitand(
-            -- we have to recreate it, because sql doesn't allow to reuse values we've already calculated,
-            -- and also doesn't have a native function like MySQL does
+            -- we have to recreate it, because sql doesn't allow to reuse values we've already
+            --  calculated, and also doesn't have a native function like MySQL does
             -- you might want to outsource this into a function
             to_number(regexp_substr(:ip, '\d+', 1, 1)) * 16777216 +
             to_number(regexp_substr(:ip, '\d+', 1, 2)) * 65536 +
@@ -286,6 +289,80 @@ This approach enables a 50 msec retrieval time on a free Oracle Cloud 23i instan
 This means, we'll have to generate only one index on the `masked_network` field, and we are good to go. Using this technique, instead of lengthy scans, we have 32 index-based direct id lookups, which the database can further parallelize during execution.
 
 If you try this method, you'll get a nearly optimal solution on the latest Oracle releases. My experience is that if you try to use this approach with small dataset (partial import), it works fine, but for the whole dataset the db tries to outsmart you by doing full-table scans, since it needs to fetch the data for the `significant_bits` column, and Ora doesn't like that. The optimal approach is to **include the `significant_bits` field to the index**, and then it can be used for sorting.
+
+## Concepts of city retrieval based on lat/long coordinates
+
+### Goals
+
+There are numerious city location databases circulating around on the internet. However, getting a reliable and updated source is a nuisance, if we already have something simmilar imported into our database. The goal of this use-case is to input a geocoordinate and a range, and receive the best matching city reference information from MaxMind's GeoCity Light dataset.
+
+- Get it as fast as possible
+- Approcimate results are acceptable
+
+The (current) main goal is to use this algorithm in a fraud-monitoring solution, where approximations are natural, and even the "we can't find a close-by city for this ip address" has an important meaning.
+
+### The challenge
+
+The GeoLite City database holds the geolocation coordinates in the "blocks" file, which contains the network ranges. This file is large (the 2020 file contains 3.2 million records), and if we want an exact solution, we have to match each and every record's location to the input, calculate the distance with the Heaversine formula, and choose the closest location. This is obviously a demanding task on millinos of records, so we need some smart decisions and heavy optimalizations to find a faster way. 
+
+### Solution design
+
+#### Algorithm design
+
+The first idea is to **restrict the number of rows** to perform the difficult calculations based on a crude filter. We draw a boundary "box", which presumably includes the coordinates. But this means, if we are not "close enough" to one point, we might be on a place where we can't find any relevant solution. We can check this, if we prepare a map, which groups the block records for their truncated lat/long values. 
+
+![image](https://github.com/user-attachments/assets/830dd9bc-e10d-4bd6-8269-299ddccfbed7)
+
+As it seems, we'd be missing most of the Sahara desert, the Amazonas, the Himalayas, the Gobi desert, most of the *stan countries, Siberia, and the northen part of Canada. But that's not a problem, as these parts of the globe are unhabited, so no problem if we can't identify the nearest city.
+
+Let's continue how can we **calculate the boundary**. The GeoLite database defines the coordinates as latitude and longitude in degrees, as we usually used to: -90 to 90 degrees for latitude, and -180 to 180 degrees for longitude. The easiest way to calculate a boundary, is to add / substract certain degrees to the coordinates of the point we want to identify, and search withing this boundary with `where` clauses. If we want to have a bounding box which includes a circle with radius `r`, we can calculate:
+- latitude as `[lat - r/222, lat + r/222]`, as 1 degree of latitude is 111 km,
+- longitude as `[lon - r/222/cos(lat), lon + r/222/cos(lat)]`
+So on the equator, we have a square, but the further we go to the poles, the area takes up a shape of a rectangle lying on it's longer side.
+
+We should **examine the location distribution**, as I'd figure that structure in the data will come handy in index design. There shouldn't be a big surprise, as the number of recors should follow the geography of the continents:
+![image](https://github.com/user-attachments/assets/a6438ea3-d87d-4ba0-ba3d-a31fff44d20a)
+So most of the points are in the northern hemisphere.
+![image](https://github.com/user-attachments/assets/5615b3de-5abc-4ad3-b4a8-ccb1a5de0902)
+And we can see clear distinction of he Americas, Eurpoe + Africa, India, and east Asia.
+It's important to note, that longitudal coordinates despite the clumps of the contintens are more evenly spred out, so this information should be taken into consideration when designing indexes.
+
+I've mentioned, that **calculating the distance** between two points on a sphere is not trivial. However, if we stick to our restriction of only searching within a relatively small cirlce (let's say: 200 km), we can use the **Equirectangular approximation**, which gives a pretty decent result, and saves us from trigonometry-heavy calculations:
+
+`6371 * sqrt(power((latitude - :lat) * 3.1415 / 180, 2) + power(cos((latitude + :lat) / 2 * 3.1415 / 180)*(longitude - :lon) * 3.1415 / 180, 2)) `
+
+where:
+- 6371 is the Earth's radius
+- we are calculating the difference of latitudes in degrees and converting them to radians
+- we are calculating the difference of longitude in degrees and converting them to radians
+- longitude difference is adjusted by the cosine of the middle point of the latitudes 
+
+During some initial testing, I noticed, that many of the blocks pointed to the same geolocation_id values. This piqued my interest, so I checked the cardinality of the data:
+- 120.563 records in city_locations
+- 117.397 distinct geoname_id found in the city_blocks table
+- 146.971 different lat/long pairs in the city_blocks table
+
+This means for me, that if we are only interested in the cities anywas, **we are better to enrich the city_locations table with location information**, as it would make the queried dataset smaller by a magnitude. Only one check remains: we need to be sure, we don't make a big mistake by averaging out the location coordinates. This can be done pretty simply with SQL:
+
+```SQL
+select 
+    cl.geoname_id,
+    count(*) city_block_count,
+    count(distinct '' || latitude || longitude) distinct_coordinates_count,
+    avg(cb.latitude) avg_lat, 
+    avg(cb.longitude) avg_lon, 
+    stddev(cb.latitude) stddev_lat,
+    stddev(cb.longitude) stddev_lon
+from city_blocks cb, city_locations cl
+where cl.geoname_id = cb.geoname_id and cl.city_name is not null
+group by cl.geoname_id
+having stddev(cb.latitude) + stddev(cb.longitude) > 0
+order by stddev(cb.latitude) + stddev(cb.longitude) desc;
+```
+
+Most of the geolocation_ids have only one range, so most of the time the standard deviation is zero, so it's trivial. Examining the more complex cases, it turns out, thet 10-20-is locations are problematic, but otherwise, the standard deviation is pretty low. Interestingly, one of the errorneous record was in Hungary: one of the block record pointed to Tokaj (small city at the center of a famous wine region), and the other is at Nagykálló, 42 km away from each other. I consider these irregularities which can be easily corrected in MaxMind's future releases (might be already done so).
+
+#### Table structure
 
 ## Contribution, discussion, etc
 
