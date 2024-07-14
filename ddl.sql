@@ -6,6 +6,7 @@
 ---
 --- Accessing country-level information
 --- Table holds all of the fields that are required for experiments. Remove the ones you don't need in production.
+--- Also note, that Maxmind's country blocks do not contain lat/long coordinates and postal codes.
 ---
 
 create table country_blocks (
@@ -15,10 +16,7 @@ create table country_blocks (
 	represented_country_geoname_id number,
 	is_anonymous_proxy number(1),
 	is_satellite_provider number(1),
-	postal_code varchar2(24),
-	latitude number,
-	longitude number,
-	accuracy_radius number,
+	-- virtual columns
 	significant_bits number as (to_number(regexp_substr(network, '\d+', 1, 5))),
 	bitmask number as (bitand(4294967295 * power(2, 32 - to_number(regexp_substr(network, '\d+', 1, 5))), 4294967295)),
 	masked_network number as (bitand(
@@ -141,7 +139,8 @@ create or replace function getCountryBlockNetwork (ip in varchar2)
 
 create table city_blocks (
 	network varchar2(19) not null,
-	geoname_id number not null,
+	-- unfortunately, there are some records with no geoname information
+	geoname_id number,
 	registered_country_geoname_id number,
 	represented_country_geoname_id number,
 	is_anonymous_proxy number(1) not null,
@@ -150,6 +149,7 @@ create table city_blocks (
 	latitude number,
 	longitude number,
 	accuracy_radius number,
+	-- virtual columns
 	significant_bits number as (to_number(regexp_substr(network, '\d+', 1, 5))),
 	bitmask number as (bitand(4294967295 * power(2, 32 - to_number(regexp_substr(network, '\d+', 1, 5))), 4294967295)),
 	masked_network number as (bitand(
