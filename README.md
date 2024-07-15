@@ -397,7 +397,10 @@ select
     avg_lat,
     avg_lon,
     stddev_lat + stddev_lon as accuracy,
-    6371 * sqrt(power((avg_lat - :lat) * 3.1415 / 180, 2) + power(cos((avg_lat + :lat) / 2 * 3.1415 / 180)*(avg_lon - :lon) * 3.1415 / 180, 2)) as distance,
+    6371 * sqrt(
+      power((avg_lat - :lat) * 3.1415 / 180, 2) +
+      power((avg_lon - :lon) * 3.1415 / 180, 2) * cos((avg_lat + :lat) / 2 * 3.1415 / 180)
+    ) as distance,
     city_locations.*
 from v_city_locations, city_locations
 where 1 = 1
@@ -411,11 +414,17 @@ order by
 ;
 ```
 
-It's a simple, basic join, nothing fancy, but effective.
+It's a simple, basic join, nothing fancy, but effective. If we want to reduce the calculation burdern, we can ommit the `6371 * sqrt(...)` part, as it is just scaling the distance. For sorting purposes, the omission of this part is totally fine.
 
 #### Index design
 
-TBD
+If you look at the map, green squares usually have 10-ish locations, yellow have 1000-10000-is records, orange ones have above 10.000 records (check California, and the middle of the US). These are too much, so my dream of using super-fast bitmap indexes on the truncated values of the lat/long coordinates went up in flames. One thing is that the filter would be less selective, the problem would be that the values could not be used directly from the index, and Ora needs to fetch the records. Unfortunately, Oracle tends to do a full table scan in these cases, which is not good.
+
+Instead, I went with the good old **simple index solution (btree)**, which can incorporate the latitude and longitude values, and can be reused for filtering. One important thing is to choose the order of latitude and longitude in the index. As I've shown before, longitude coordinates are more spread-out along the axis, so they are more "selective" which makes the search's cardinality lower.
+
+`create index idx_v_city_locations_lat_long on v_city_locations (avg_lon, avg_lat) compress 1 compute statistics;`
+
+This index can be super fast on tables with 100.000-ish records. Also, note, that this is only possible because we are using materialized view.
 
 ## Contribution, discussion, etc
 
