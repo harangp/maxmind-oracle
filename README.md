@@ -360,9 +360,62 @@ having stddev(cb.latitude) + stddev(cb.longitude) > 0
 order by stddev(cb.latitude) + stddev(cb.longitude) desc;
 ```
 
-Most of the geolocation_ids have only one range, so most of the time the standard deviation is zero, so it's trivial. Examining the more complex cases, it turns out, thet 10-20-is locations are problematic, but otherwise, the standard deviation is pretty low. Interestingly, one of the errorneous record was in Hungary: one of the block record pointed to Tokaj (small city at the center of a famous wine region), and the other is at Nagykálló, 42 km away from each other. I consider these irregularities which can be easily corrected in MaxMind's future releases (might be already done so).
+Most of the geolocation_ids have only one range, so most of the time the standard deviation is zero, so it's trivial. Examining the more complex cases, it turns out only 10-20-is locations are problematic, but otherwise, the standard deviation is pretty low. Interestingly, one of the errorneous record was in Hungary: one of the block record pointed to Tokaj (small city at the center of a famous wine region), and the other is at Nagykálló, 42 km away from each other. I consider these irregularities which can be easily corrected in MaxMind's future releases (might be already done so).
+
+The last remaing though is using **location / spatial queries** which are Oracle-specific things - in a later phase, I'd like to try them. But not now.
 
 #### Table structure
+
+It is tempting to enhance the `city_locations` table with virtual columns, as we did with the `city_blocks`. Unfortunately, this won't work, as it can't contain data from other tables. Views are for that. But there's a catch: views can't be indexed, and that would be a hindrance on our goal of writing super efficient selects. However. There's a thing in Oracle called **materialized views**, which are essentially tables (SQL developer even refuses to show them under the "Views" tab), which can be either manually or automatically updated, and can have indexes on it's columns:
+
+```SQL
+create MATERIALIZED view V_CITY_LOCATIONS
+BUILD IMMEDIATE 
+REFRESH COMPLETE
+AS
+select 
+    cl.geoname_id,
+    count(*) city_block_count,
+    count(distinct '' || latitude || longitude) distinct_coordinates_count,
+    avg(cb.latitude) avg_lat, 
+    avg(cb.longitude) avg_lon, 
+    stddev(cb.latitude) stddev_lat, 
+    stddev(cb.longitude) stddev_lon
+from city_blocks cb, city_locations cl
+where cl.geoname_id = cb.geoname_id and cl.city_name is not null
+group by cl.geoname_id;
+```
+
+Essentially, this view will prepare the location data and metrics in a consumable format.
+
+#### Query designs
+
+Let's put all these things together, and create a query, which incorporates the materialized view, the adjusted range, and distance calculationss:
+
+```SQL
+select 
+    avg_lat,
+    avg_lon,
+    stddev_lat + stddev_lon as accuracy,
+    6371 * sqrt(power((avg_lat - :lat) * 3.1415 / 180, 2) + power(cos((avg_lat + :lat) / 2 * 3.1415 / 180)*(avg_lon - :lon) * 3.1415 / 180, 2)) as distance,
+    city_locations.*
+from v_city_locations, city_locations
+where 1 = 1
+    and avg_lat > :lat - :range / 222
+    and avg_lat < :lat + :range / 222
+    and avg_lon > :lon - :range / 222 / cos(:lat * 3.1415 / 180)
+    and avg_lon < :lon + :range / 222 / cos(:lat * 3.1415 / 180)
+    and v_city_locations.geoname_id = city_locations.geoname_id    
+order by
+    distance asc
+;
+```
+
+It's a simple, basic join, nothing fancy, but effective.
+
+#### Index design
+
+TBD
 
 ## Contribution, discussion, etc
 
