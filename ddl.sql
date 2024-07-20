@@ -276,3 +276,78 @@ create or replace function getCityBlockNetwork (ip in varchar2)
 		return ret.network;
 	end;
 /
+
+--------------------------------------------------
+--- Getting city information based on location ---
+--------------------------------------------------
+
+-- location information is only stored in city blocks
+CREATE MATERIALIZED VIEW V_CITY_LOCATIONS
+BUILD IMMEDIATE 
+REFRESH COMPLETE
+AS
+select 
+    cl.geoname_id,
+    count(*) city_block_count,
+    count(distinct '' || latitude || longitude) distinct_coordinates_count,
+    avg(cb.latitude) avg_lat, 
+    avg(cb.longitude) avg_lon, 
+    stddev(cb.latitude) stddev_lat, 
+    stddev(cb.longitude) stddev_lon
+from city_blocks cb, city_locations cl
+where cl.geoname_id = cb.geoname_id and cl.city_name is not null
+group by cl.geoname_id
+;
+
+create index idx_v_city_locations_lat_long on v_city_locations (avg_lon, avg_lat) compress 1 compute statistics;
+
+/**
+ * Retrieve a geonamId by given latitude and longitude numbers. Select the one within the given range
+ * Please note, that range (km) is not a circle radius, but a given height of a rectangle, where length is
+ * adjusted to latitude.
+ * This is a simplified query, which only deals with the geoname id
+ */
+create or replace function getCityGeoNameIdByLocation (lat in number, lon in number, range in number)
+	return number
+	is ret number;
+	begin
+	select geonameId into ret from (
+		select 
+		    v_city_locations.geoname_id as geonameId
+		from v_city_locations, city_locations
+		where 1 = 1
+		    and avg_lat > lat - range / 222
+		    and avg_lat < lat + range / 222
+		    and avg_lon > lon - range / 222 / cos(lat * 3.1415 / 180)
+		    and avg_lon < lon + range / 222 / cos(lat * 3.1415 / 180)
+		    and v_city_locations.geoname_id = city_locations.geoname_id    
+		order by
+		    power((avg_lat - lat) * 3.1415 / 180, 2) + power(cos((avg_lat + lat) / 2 * 3.1415 / 180)*(avg_lon - lon) * 3.1415 / 180, 2) asc
+	) where rownum <= 1;
+	return ret;
+	end;
+/
+
+/** 
+ * Use this query to play around with the data from v_city_locations
+ * SQL developer will query an input for lat, lon and range values
+
+	select 
+	    v_city_locations.geoname_id,
+	    avg_lat,
+	    avg_lon,
+	    stddev_lat + stddev_lon as accuracy,
+	    6371 * sqrt(power((avg_lat - :lat) * 3.1415 / 180, 2) + power(cos((avg_lat + :lat) / 2 * 3.1415 / 180)*(avg_lon - :lon) * 3.1415 / 180, 2)) as distance,
+	    city_locations.*
+	from v_city_locations, city_locations
+	where 1 = 1
+	    and avg_lat > :lat - :range / 222
+	    and avg_lat < :lat + :range / 222
+	    and avg_lon > :lon - :range / 222 / cos(:lat * 3.1415 / 180)
+	    and avg_lon < :lon + :range / 222 / cos(:lat * 3.1415 / 180)
+	    and v_city_locations.geoname_id = city_locations.geoname_id    
+	order by
+	    distance asc
+	;
+ * 
+ */
