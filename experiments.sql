@@ -70,3 +70,16 @@ select
     power(2, rownum - 1) - 1 as host_bits_mask
 from dual
 connect by rownum <= 32;
+
+-- Test index usage. Run an explain plan on this feature. There shouldn't be any full table scan in the exacution plan.
+select * from city_locations where geoname_id in (6317008, 3465931, 9972414, 3395503, 714659, 1855450, 3056979);
+
+-- Retrieving data based on location. Should be optimal if you ask SQL advisor.
+select v_city_locations.*, city_locations.*
+from v_city_locations, city_locations
+where 1=1
+    and v_city_locations.geoname_id = getCityGeoNameIdByLocation(59.9454, 30.5558, 50)
+    and v_city_locations.geoname_id = city_locations.geoname_id
+;
+
+
