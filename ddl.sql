@@ -299,7 +299,8 @@ where cl.geoname_id = cb.geoname_id and cl.city_name is not null
 group by cl.geoname_id
 ;
 
-create index idx_v_city_locations_lat_long on v_city_locations (avg_lon, avg_lat) compress 1 compute statistics;
+create index idx_v_city_locations_geoname_id on v_city_locations (geoname_id) compress 1 compute statistics;
+create index idx_v_city_locations_lat_long_geoname on v_city_locations (avg_lon, avg_lat, geoname_id) compress 1 compute statistics;
 
 /**
  * Retrieve a geonamId by given latitude and longitude numbers. Select the one within the given range
