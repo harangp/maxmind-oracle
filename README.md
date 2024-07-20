@@ -9,8 +9,9 @@ Essentially this repo only contains the DDL script, some snipetts for documentat
 
 ### Changelog
 
-Currently working on main: city lookup based on lat/long values
+Currently working on main: IPv6 lookups
 
+- **1.2.0** - New functions: retrieve data by location
 - **1.1.2** - Further optimalizations and bugfixes
 - **1.1.1** - Bugfix in sorting for retrieving the correct id
 - **1.1.0** - New functions
@@ -20,7 +21,6 @@ Currently working on main: city lookup based on lat/long values
 ### Known issues
 
 - This concept only handles IPv4 addresses, though it could be extended to IPv6 as well
-- Reverse lookup is not implemented (eg.: find the ip ranges for a certain geolocation)
 
 ## Usage
 
@@ -46,6 +46,7 @@ Upon invoking either of the *GeoNameId functions, they will return **a key, that
 
 - `getCountryGeoNameId()` returns the field to be looked up from `country_locations.geoname_id`
 - `getCityGeoNameId()` returns the field to be looked up from `city_locations.geoname_id`
+- `getCityGeoNameIdByLocation()` returns the field to be looked up from `city_locations` and `v_city_locations`
 
 Use these functions, if you are interested in looking up the country/continent/city/etc detailed information.
 
@@ -54,7 +55,7 @@ If you want to **get access to the block record** in a stored procedure, you mig
 - `getCountryBlock()` returns the one row of `country_blocks` that most matches the input ip address
 - `getCityBlock()` returns the one row of `city_blocks` that most matches the input ip address
 
-These will return the row itself, which can be further accessed in the inside of a stored procedure. Get the ids, access the data, make further lookups if you need extra information from the location tables. 
+These will return the respective row itself, which can be further used in the inside of a stored procedure. Get the ids, access the data, make further lookups if you need extra information from the location tables. 
 
 If you want to **get an id for retrieving the block record** (for example because you want to use it in a simple select) then there are convenience functions to do so:
 
@@ -62,6 +63,22 @@ If you want to **get an id for retrieving the block record** (for example becaus
 - `getCityBlockNetwork()` returns the `network` column of the found city block
 
 You can use the result to look up the whole record by id. Altough the structure doesn't define the `network` to be a primary key, but it is pretty much is.
+
+#### View(s)
+
+The solution only uses the (materialized) view `v_city_locations`, which collects information on the `city_locations` and `city_blocks` tables. This is needed as the `city_blocks` are large but redundant, synthetizing it's relevant information, and filtering for valid cities is a great help.
+
+
+| Field | Type | Nullable | Description |
+| - | - | - | - |
+| **GEONAME_ID** | number | no | Id that can bell looked up from city_blocks and city_locations. Only contains ids where city name is a given. As the block table contains country and continent level information, it's important not to incclude those |
+| **CITY_BLOCK_COUNT** | number | no | how many country block was used caclulating the lat/long values |
+| **DISTINCT_COORDINATES_COUNT** | number | no | how many different coordinates belong to this geoname - if this number is 1, every location was the same for each block |
+| **AVG_LAT**  | number | no | average of latitude coordinates coming from blocks |
+| **AVG_LON**  | number | no | average of longitude coordinates coming from blocks |
+| **STDDEV_LAT**  | number | no | Standard deviation for latitude coordinates. If 0, every latitude value was the same. |
+| **STDDEV_LON** | number | no | Standard deviation for longitude coordinates. If 0, every longitude value was the same. |
+
 
 #### Example for getCityGeoNameId():
 
@@ -79,6 +96,31 @@ returns this:
 Please note, that MaxMind organizes it's data in a way that the city-level database also contains the country-level database, so for your lookups, you don't have to use both information.
 
 Also note, that if you are cross-referencing the `geoname_id` from wrong table, you'll get bad results. This seem to be trivial, but I've seen many db programmers fall for this mistake.
+
+#### Example for getCityGeoNameIdByLocations():
+
+``` SQL
+select getCityGeoNameIdByLocation(59.9454, 30.5558, 50) as geomane_id from dual;
+```
+
+returns this:
+
+| GEONAME_ID |
+| - |
+| 546213 |
+
+which looks up this from `v_city_location`:
+
+| GEONAME_ID | CITY_BLOCK_COUNT | DISTINCT_COORDINATES_COUNT | AVG_LAT | AVG_LON | STDDEV_LAT | STDDEV_LON |
+| - | - | - | - | - | - | - |
+| 546213 | 1 | 1 | 59,9454| 30,5558 | 0 | 0 |
+
+and this from `city_locations`:
+
+| GEONAME_ID | LOCALE_CODE | CONTINENT_CODE | CONTINENT_NAME | COUNTRY_ISO_CODE | COUNTRY_NAME | SUBDIVISION_1_ISO_CODE | SUBDIVISION_1_NAME | SUBDIVISION_2_ISO_CODE | SUBDIVISION_2_NAME | CITY_NAME | METRO_CODE | TIME_ZONE | IS_IN_EUROPEAN_UNION |
+| - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+|546213 | en | EU | Europe | RU | Russia | LEN | Leningradskaya Oblast' |  |  | Yanino Pervoye |  | Europe/Moscow | 0 |
+
 
 #### Example for getCityBlock():
 
@@ -399,7 +441,7 @@ select
     stddev_lat + stddev_lon as accuracy,
     6371 * sqrt(
       power((avg_lat - :lat) * 3.1415 / 180, 2) +
-      power((avg_lon - :lon) * 3.1415 / 180, 2) * cos((avg_lat + :lat) / 2 * 3.1415 / 180)
+      power(cos((avg_lat + :lat) / 2 * 3.1415 / 180) * (avg_lon - :lon) * 3.1415 / 180, 2)
     ) as distance,
     city_locations.*
 from v_city_locations, city_locations
@@ -420,9 +462,11 @@ It's a simple, basic join, nothing fancy, but effective. If we want to reduce th
 
 If you look at the map, green squares usually have 10-ish locations, yellow have 1000-10000-is records, orange ones have above 10.000 records (check California, and the middle of the US). These are too much, so my dream of using super-fast bitmap indexes on the truncated values of the lat/long coordinates went up in flames. One thing is that the filter would be less selective, the problem would be that the values could not be used directly from the index, and Ora needs to fetch the records. Unfortunately, Oracle tends to do a full table scan in these cases, which is not good.
 
-Instead, I went with the good old **simple index solution (btree)**, which can incorporate the latitude and longitude values, and can be reused for filtering. One important thing is to choose the order of latitude and longitude in the index. As I've shown before, longitude coordinates are more spread-out along the axis, so they are more "selective" which makes the search's cardinality lower.
+Instead, I went with the good old **simple index solution (b-tree)**, which can incorporate the latitude and longitude values, and can be reused for filtering. One important thing is to choose the order of latitude and longitude in the index. As I've shown before, longitude coordinates are more spread-out along the axis, so they are more "selective" which makes the search's cardinality lower.
 
-`create index idx_v_city_locations_lat_long on v_city_locations (avg_lon, avg_lat) compress 1 compute statistics;`
+`create index idx_v_city_locations_lat_long_geoname on v_city_locations (avg_lon, avg_lat, geoname_id) compress 1 compute statistics;`
+
+Note, that geoname_id is added to the index as well. slightly increases the size of the index, but we don't need to fetch from the table if we'd want to do joins further down the line.
 
 This index can be super fast on tables with 100.000-ish records. Also, note, that this is only possible because we are using materialized view.
 
